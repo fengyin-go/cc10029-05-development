@@ -10,7 +10,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload
+from app.services.disposal_engine import ensure_seed_package
 from app.services.quality import QualityService
+from app.services.quality_dataset import dataset_service
 
 router = APIRouter(prefix="/api/quality", tags=["质量报告"])
 service = QualityService()
@@ -43,6 +45,49 @@ def list_results() -> dict[str, Any]:
 def run_analysis(payload: EntryPayload) -> dict[str, Any]:
     results = service.run_analysis(payload.values)
     return {"items": results}
+
+
+# ---------------- 质量指标数据集（读取校验异常数据处置包生成） ----------------
+
+@router.get("/datasets")
+def list_datasets(batch: str | None = Query(default=None, description="按校验批次过滤")) -> dict[str, Any]:
+    """质量指标数据集清单：数字直接取自处置包明细，已替换包不进入下游清单。"""
+    ensure_seed_package()
+    return {"items": dataset_service.list_datasets(batch)}
+
+
+@router.get("/datasets/{batch}")
+def get_dataset(batch: str) -> dict[str, Any]:
+    """下游模块只允许读取一份绑定规则版本的完整生效处置包。"""
+    ensure_seed_package()
+    dataset = dataset_service.active_dataset(batch)
+    if dataset is None:
+        from app.services.disposal import ERR_PACKAGE_MISSING, repo
+        repo.add_defect("处置包丢失",
+                        f"质量报告读取批次 {batch} 时未找到生效处置包，指标无法生成",
+                        batch=batch, code=ERR_PACKAGE_MISSING)
+        raise HTTPException(status_code=404,
+                            detail=f"{ERR_PACKAGE_MISSING} 批次 {batch} 没有生效的校验异常数据处置包")
+    return dataset
+
+
+@router.post("/datasets/sync")
+def sync_datasets() -> ActionResult:
+    """把处置包结论同步到质量指标数据集清单，并核对口径一致性。"""
+    ensure_seed_package()
+    datasets = dataset_service.list_datasets()
+    drifts = dataset_service.consistency_check()
+    if drifts:
+        from app.services.disposal import repo
+        for drift in drifts:
+            repo.add_defect("指标口径错位", drift["问题"], batch=drift["校验批次"],
+                            package_no=drift["处置编号"], code="E4009")
+        return ActionResult(ok=False,
+                            message=f"同步发现 {len(drifts)} 项指标与处置包明细不一致，已进入缺陷清单",
+                            entry={"datasets": datasets, "drifts": drifts})
+    return ActionResult(ok=True,
+                        message=f"处置包结论已同步到质量指标数据集，共 {len(datasets)} 条，口径与明细一致",
+                        entry={"datasets": datasets})
 
 
 @router.get("/export")

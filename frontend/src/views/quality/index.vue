@@ -25,6 +25,34 @@
       <tbody><tr v-for="row in results" :key="row.id"><td v-for="c in resultColumns" :key="c">{{ row[c] ?? '—' }}</td></tr></tbody>
     </table>
     <p v-if="!results.length && !loading" style="text-align:center;color:var(--muted)">请配置参数后运行分析</p>
+
+    <!-- 质量指标数据集：读取校验异常数据处置包 -->
+    <div class="dataset-wrap" data-testid="dataset-panel">
+      <header class="page-head">
+        <div>
+          <h3>质量指标数据集</h3>
+          <p class="page-desc">读取校验异常数据处置包生成，异常样本数量与阻断级别必须与处置包明细一致，已替换处置包不进入下游清单。</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn primary" type="button" data-testid="sync-dataset" @click="syncDatasets">同步处置包结论</button>
+        </div>
+      </header>
+      <p v-if="syncMessage" :class="syncOk ? '' : 'error-text'" data-testid="sync-message">{{ syncMessage }}</p>
+      <table class="data-table" data-testid="dataset-table">
+        <thead><tr><th>数据集编号</th><th>校验批次</th><th>来源处置编号</th><th>规则版本</th><th>样本数量</th><th>异常样本数量</th><th>异常证据数</th><th>阻断级别统计</th><th>阻断率</th><th>达标率</th></tr></thead>
+        <tbody>
+          <tr v-for="d in datasets" :key="d['数据集编号']" :data-testid="`dataset-row-${d['校验批次']}`">
+            <td>{{ d['数据集编号'] }}</td><td>{{ d['校验批次'] }}</td><td>{{ d['来源处置编号'] }}</td><td>{{ d['规则版本'] }}</td>
+            <td data-testid="dataset-sample-total">{{ d['样本数量'] }}</td>
+            <td data-testid="dataset-abnormal">{{ d['异常样本数量'] }}</td>
+            <td>{{ d['异常证据数'] }}</td>
+            <td data-testid="dataset-levels">{{ formatStats(d['阻断级别统计']) }}</td>
+            <td>{{ (d['阻断率'] * 100).toFixed(1) }}%</td><td>{{ (d['达标率'] * 100).toFixed(1) }}%</td>
+          </tr>
+          <tr v-if="!datasets.length"><td colspan="10" class="empty-state">暂无生效处置包，先到采集校验生成校验异常数据处置包</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 </template>
 <script setup lang="ts">
@@ -45,5 +73,34 @@ async function runAnalysis() {
   try { const res = await request(`${ENDPOINT}/run`, { method: 'POST', body: JSON.stringify({ values: params.value }) }); const data = await res.json(); results.value = data.items || []; chartData.value = (data.items || []).map((r: any) => ({ label: Object.values(r)[0] as string, value: Object.values(r).filter(v => typeof v === 'number')[0] as number || 0 })).slice(0, 6) } catch(e) { results.value = [] }
   loading.value = false
 }
-onMounted(fetchSummary)
+
+// ---- 质量指标数据集 ----
+type DatasetRow = Record<string, any>
+const datasets = ref<DatasetRow[]>([])
+const syncMessage = ref('')
+const syncOk = ref(true)
+function formatStats(stats: Record<string, number> | undefined): string {
+  if (!stats) return '—'
+  return Object.entries(stats).map(([k, v]) => `${k} ${v}`).join(' / ')
+}
+async function reloadDatasets() {
+  const res = await request(`${ENDPOINT}/datasets`)
+  datasets.value = (await res.json()).items || []
+}
+async function syncDatasets() {
+  syncMessage.value = ''
+  const res = await request(`${ENDPOINT}/datasets/sync`, { method: 'POST', body: JSON.stringify({}) })
+  const data = await res.json()
+  syncOk.value = !!data.ok
+  syncMessage.value = data.message
+  await reloadDatasets()
+}
+
+onMounted(async () => {
+  await fetchSummary()
+  await reloadDatasets()
+})
 </script>
+<style scoped>
+.dataset-wrap { margin-top: 24px; border-top: 2px solid var(--border); padding-top: 12px; }
+</style>

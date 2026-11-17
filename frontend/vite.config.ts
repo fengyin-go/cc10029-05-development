@@ -20,7 +20,8 @@ export default defineConfig({
     open: false,
     strictPort: false,
     proxy: {
-      '/api': {
+      // 用正则锚定 /api 边界，避免字符串前缀误匹配 SPA 路由 /apigate
+      '^/api(?:/|$)': {
         target: proxyTarget,
         changeOrigin: true,
       },

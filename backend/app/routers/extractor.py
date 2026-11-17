@@ -18,6 +18,11 @@ LIST_FIELDS = ["模板编号", "模板名称", "输入URL", "字段映射", "清
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
 
 
+def csv_cell(value: Any) -> str:
+    text = str(value) if value is not None else ""
+    return "'" + text if text.startswith(("=", "+", "-", "@")) else text
+
+
 @router.get("")
 def get_graph() -> dict[str, Any]:
     """返回节点与边组成的 DAG 图数据。"""
